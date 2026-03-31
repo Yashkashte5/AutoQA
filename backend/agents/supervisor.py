@@ -65,7 +65,7 @@ def run_pipeline(run_id: str, suite_id: str, redis_client):
             # ── Stage 2: Test Generator Agent ──────────────────────────────
             _set_progress(redis_client, run_id, "generating", 30,
                           f"Generating tests for {len(endpoints)} endpoints...")
-            test_cases = run_test_generator(endpoints, suite.base_url, batch_size=3)
+            test_cases = run_test_generator(endpoints, suite.base_url, batch_size=2)
 
             if not test_cases:
                 run.status = "failed"
@@ -101,6 +101,11 @@ def run_pipeline(run_id: str, suite_id: str, redis_client):
             bug_report = run_bug_reporter(raw_results, batch_size=10)
             enriched_results = bug_report["enriched_results"]
             failure_summary = bug_report["failure_summary"]
+            summary_text = bug_report.get("summary", "")
+
+            if summary_text:
+                redis_client.hset(f"run_progress:{run_id}", mapping={"summary": summary_text})
+                redis_client.expire(f"run_progress:{run_id}", 3600)
 
             # ── Stage 6: Coverage Agent — metrics ──────────────────────────
             coverage_data = compute_coverage(enriched_results, test_cases)

@@ -11,6 +11,23 @@ router = APIRouter()
 _redis = redis.from_url(settings.redis_url, decode_responses=True)
 
 
+def _fallback_ai_summary(by_category: dict, total_failures: int) -> str:
+    if total_failures == 0:
+        return "System health is good with no failing tests observed."
+
+    ordered = sorted(by_category.items(), key=lambda x: x[1], reverse=True)
+    top = ordered[:3]
+    top_text = ", ".join(f"{k} ({v})" for k, v in top)
+
+    health = "good"
+    if by_category.get("server_error", 0) > 0 or total_failures >= 5:
+        health = "poor"
+    elif total_failures >= 2 or by_category.get("timeout", 0) > 0:
+        health = "moderate"
+
+    return f"System health is {health}; top issues are {top_text}."
+
+
 @router.post("/{suite_id}")
 def trigger_run(suite_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     suite = db.query(TestSuite).filter(TestSuite.id == suite_id).first()
@@ -117,9 +134,16 @@ def get_run_results(
         if r.severity:
             by_severity[r.severity] = by_severity.get(r.severity, 0) + 1
 
+    progress = _redis.hgetall(f"run_progress:{run_id}")
+    ai_summary = progress.get("summary", "")
+    if not ai_summary:
+        total_failures = summary["failed"] + summary["errors"]
+        ai_summary = _fallback_ai_summary(by_category, total_failures)
+
     return {
         "run_id": run_id,
         "summary": summary,
+        "ai_summary": ai_summary,
         "by_category": by_category,
         "by_severity": by_severity,
         "results": [

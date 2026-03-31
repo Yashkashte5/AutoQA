@@ -10,15 +10,26 @@ Responsible for:
 
 def deduplicate_test_cases(test_cases: list[dict]) -> list[dict]:
     """
-    Remove duplicate test cases.
-    Two test cases are duplicates if they share the same method + endpoint,
-    regardless of expected_status (LLM sometimes generates same endpoint
-    twice with different expected codes).
+    Remove duplicate test cases while preserving one success and one negative
+    variant for each method + endpoint pair.
+
+    Buckets per method+endpoint:
+    - success: expected_status is 2xx
+    - non_success: expected_status is not 2xx or missing
+
+    This keeps runtime bounded while retaining basic positive/negative coverage.
     """
     seen = set()
     unique = []
+
+    def _bucket(tc: dict) -> str:
+        code = tc.get("expected_status")
+        if isinstance(code, int) and 200 <= code < 300:
+            return "success"
+        return "non_success"
+
     for tc in test_cases:
-        key = f"{tc.get('method')}:{tc.get('endpoint')}"
+        key = f"{tc.get('method')}:{tc.get('endpoint')}:{_bucket(tc)}"
         if key not in seen:
             seen.add(key)
             unique.append(tc)

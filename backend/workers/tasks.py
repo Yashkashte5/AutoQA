@@ -4,9 +4,12 @@ import httpx, time
 LATENCY_WARNING_MS = 2000
 LATENCY_CRITICAL_MS = 5000
 
+HTTP_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+HTTP_LIMITS = httpx.Limits(max_keepalive_connections=100, max_connections=200)
+HTTP_CLIENT = httpx.Client(timeout=HTTP_TIMEOUT, limits=HTTP_LIMITS)
+
 @celery.task(bind=True, max_retries=2)
 def run_test_case(self, test_case: dict, run_id: str) -> dict:
-    import httpx, time
     from urllib.parse import urlparse
 
     try:
@@ -27,15 +30,18 @@ def run_test_case(self, test_case: dict, run_id: str) -> dict:
         url = base_url + endpoint
 
         start = time.time()
-        response = httpx.request(
+        response = HTTP_CLIENT.request(
             method=test_case["method"],
             url=url,
             headers=test_case.get("headers", {}),
             json=test_case.get("body"),
-            timeout=10,
         )
         latency = round((time.time() - start) * 1000, 2)
-        passed = response.status_code == test_case.get("expected_status", 200)
+        expected_status = test_case.get("expected_status", 200)
+        if expected_status is None:
+            passed = True
+        else:
+            passed = response.status_code == expected_status
 
         return {
             "run_id": run_id,
@@ -44,7 +50,7 @@ def run_test_case(self, test_case: dict, run_id: str) -> dict:
             "status": "pass" if passed else "fail",
             "status_code": response.status_code,
             "latency_ms": latency,
-            "failure_reason": None if passed else f"Expected {test_case.get('expected_status')} got {response.status_code}",
+            "failure_reason": None if passed else f"Expected {expected_status} got {response.status_code}",
         }
     except Exception as exc:
         return {
